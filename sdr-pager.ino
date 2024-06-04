@@ -27,8 +27,8 @@ protected:
   void reset(bool keep_down = false);
   bool findChip();
   void wait();
+  void transferSPI(uint8_t cmd, uint8_t *in=NULL, uint8_t in_l=0, uint8_t *out=NULL, uint8_t out_l=0);
   void fail();
-  void waitSPI();
   SPIClass spi;
   SPISettings spiSettings = {100000, MSBFIRST, SPI_MODE0};
   union PART_INFO_t;
@@ -42,7 +42,7 @@ protected:
     };
     uint8_t bytes[6];
   };
-  POWER_UP_t power_up = {0b00000001, 0, htonl(30000000)};
+  POWER_UP_t power_up = {1, 0, htonl(30000000)};
 };
 
 union Si4362::PART_INFO_t {
@@ -67,6 +67,7 @@ union Si4362::FUNC_INFO_t {
   };
   uint8_t bytes[6];
 };
+
 union Si4362::GET_INT_STATUS_REQ_t {
   struct {
     uint8_t ph_clr_pend;
@@ -88,6 +89,28 @@ bool Si4362::begin() {
   if (!Si4362::findChip())
     return false;
 
+  if (digitalRead(nIRQ) == LOW) {
+    GET_INT_STATUS_REQ_t get_int_status = {127, 255, 255};
+    Serial.print("Clearing interrupts: ");
+    transferSPI(RADIOLIB_SI4362_CMD_GET_INT_STATUS, get_int_status.bytes, sizeof(get_int_status.bytes), NULL, 0);
+    if (digitalRead(nIRQ) != LOW) {
+      Serial.println("interrupts didn't stay");
+      return false;
+    }
+    Serial.print("nop ok, now clearing: ");
+    get_int_status = {0, 0, 0};
+    transferSPI(RADIOLIB_SI4362_CMD_GET_INT_STATUS, get_int_status.bytes, sizeof(get_int_status.bytes), NULL, 0);
+    if (digitalRead(nIRQ) != HIGH) {
+      Serial.println("interrupts didn't clear");
+      return false;
+    } else {
+      Serial.println("cleared");
+    }
+  } else {
+    Serial.print("No interrupt signal!");
+    return false;
+  }
+
   return true;
 }
 void Si4362::end() {
@@ -96,81 +119,31 @@ void Si4362::end() {
 }
 
 bool Si4362::findChip() {
-  GET_INT_STATUS_REQ_t get_int_status = {0, 0, 0};
-
   PART_INFO_t part_info;
 
   Serial.print("Resetting Si4362: ");
   reset();
   wait();
-  Serial.println("reset successfully");
+  Serial.println("finished");
 
-  if (digitalRead(nIRQ) == LOW)
-    Serial.println("interrupts; ");
-  spi.beginTransaction(spiSettings);
-  digitalWrite(nSEL, LOW);
-  spi.transfer(RADIOLIB_SI4362_CMD_POWER_UP);
-  Serial.print("Power up: ");
-  if (digitalRead(CTS) == LOW)
-    Serial.print("Chip responded; ");
-  for (int i = 0; i < sizeof(this->power_up.bytes); i++) {
-    spi.transfer(this->power_up.bytes[i]);
-  }
-  digitalWrite(nSEL, HIGH);
-  spi.endTransaction();
-  wait();
+  Serial.print("Powering up: ");
+  transferSPI(RADIOLIB_SI4362_CMD_POWER_UP, power_up.bytes, sizeof(power_up.bytes), NULL, 0);
   Serial.println("powered up");
 
-  if (digitalRead(nIRQ) == LOW) {
-    spi.beginTransaction(spiSettings);
-    digitalWrite(nSEL, LOW);
-    spi.transfer(RADIOLIB_SI4362_CMD_GET_INT_STATUS);
-    Serial.print("Clear interrupts: ");
-    if (digitalRead(CTS) == LOW)
-      Serial.print("Chip responded; ");
-    for (int i = 0; i < sizeof(get_int_status.bytes); i++) {
-      spi.transfer(get_int_status.bytes[i]);
-    }
-    digitalWrite(nSEL, HIGH);
-    spi.endTransaction();
-    wait();
-    if (digitalRead(nIRQ) != HIGH) {
-      Serial.println("interrupts didn't clear");
-      fail();
-    } else {
-      Serial.println("cleared");
-    }
-  }
-
-  wait();
-  spi.beginTransaction(spiSettings);
-  digitalWrite(nSEL, LOW);
-  spi.transfer(RADIOLIB_SI4362_CMD_PART_INFO);
-  Serial.print("Get part info: ");
-  digitalWrite(nSEL, HIGH);
-  wait();
-  digitalWrite(nSEL, LOW);
-  waitSPI();
-  for (int i = 0; i < sizeof(part_info.bytes); i++) {
-    part_info.bytes[i] = spi.transfer(0);
-  }
-  digitalWrite(nSEL, HIGH);
-  spi.endTransaction();
-
+  Serial.print("Getting part info:");
+  transferSPI(RADIOLIB_SI4362_CMD_PART_INFO, NULL, 0, part_info.bytes, sizeof(part_info.bytes));
   uint16_t partno = htons(part_info.part);
-  if (partno == 0x4362) {
-    Serial.println("found Si4362");
-    return true;
+  if (partno != 0x4362) {
+    Serial.print("chip id is wrong, got 0x");
+    Serial.print(partno, HEX);    
+    return false;
   }
 
-  Serial.print("chip id wrong, 0x");
-  Serial.print(partno, HEX);
-  Serial.println("!=0x4362");
-  return false;
+  Serial.println("found Si4362");
+  return true;
 }
 
 void Si4362::reset(bool keep_down = false) {
-  pinMode(SDN, OUTPUT);
   digitalWrite(SDN, HIGH);
   if (keep_down == false) {
     delayMicroseconds(10);
@@ -180,11 +153,14 @@ void Si4362::reset(bool keep_down = false) {
 }
 
 void Si4362::wait() {
-  for (uint8_t i = 0; i < 100; i++) {
-    if (digitalRead(CTS) == HIGH)
+  for (uint8_t i = 0; i < 200; i++) {
+    if (digitalRead(CTS) == HIGH) {
+      if (i != 0) Serial.print("ok; ");
       return;
+    }
+
     if (i == 0)
-      Serial.print("Wait for CTS .");
+      Serial.print("waiting for CTS .");
     else
       Serial.print(".");
 
@@ -194,21 +170,50 @@ void Si4362::wait() {
   fail();
 }
 
-void Si4362::waitSPI() {
+void Si4362::transferSPI(uint8_t cmd, uint8_t *in=NULL, uint8_t in_l=0, uint8_t *out=NULL, uint8_t out_l=0) {
   uint8_t cts = 0xFF;
-  spi.transfer(RADIOLIB_SI4362_CMD_READ_CMD_BUFF);
-  for (uint8_t i = 0; i < 100; i++) {
+  spi.beginTransaction(spiSettings);
+  
+  wait();  
+  digitalWrite(nSEL, LOW);
+  spi.transfer(cmd);
+  if (digitalRead(CTS) == LOW)
+    Serial.print("chip responded; ");
+  for (int i = 0; i < in_l; i++) {
+    spi.transfer(in[i]);
+  }  
+  digitalWrite(nSEL, HIGH);
+  
+  if (out_l != 0) {
+    Serial.print("reading back; ");
+    wait();
+    digitalWrite(nSEL, LOW);
+    spi.transfer(RADIOLIB_SI4362_CMD_READ_CMD_BUFF);
+    if (digitalRead(CTS) == LOW)
+      Serial.print("chip responded; ");
     cts = spi.transfer(0xFF);
-    if (cts == 0xFF)
-      return;
-    if (i == 0)
-      Serial.print("Wait for CTS over SPI.");
-    else
-      Serial.print(".");
-    delay(100);
+    for (uint8_t i = 0; (i < 100 && cts != 0xFF); i++) {
+      if (i == 0)
+        Serial.print("waiting for response .");
+      else
+        Serial.print(".");
+      delay(100);
+    }
+    if (cts != 0xFF) {
+      Serial.println("SPI did not respond");
+      return false;
+    }
+    
+    for (int i = 0; i < out_l; i++) {
+      out[i] = spi.transfer(0);
+    }
+    digitalWrite(nSEL, HIGH);
+    return true;
+  } else {
+    wait();
   }
-  Serial.println("SPI did not return");
-  fail();
+  
+  spi.endTransaction();
 }
 
 void Si4362::fail() {
@@ -218,7 +223,6 @@ void Si4362::fail() {
 }
 
 Si4362 radio;
-
 void setup() {
   Serial.begin(57600);
   Serial.println();

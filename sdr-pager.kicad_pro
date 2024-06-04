@@ -34,9 +34,9 @@
         "other_text_thickness": 0.15,
         "other_text_upright": false,
         "pads": {
-          "drill": 0.7,
-          "height": 1.0,
-          "width": 1.0
+          "drill": 0.0,
+          "height": 0.55,
+          "width": 1.6
         },
         "silk_line_width": 0.15,
         "silk_text_italic": false,
@@ -455,13 +455,13 @@
     "net_colors": null,
     "netclass_assignments": {
       "AUDIO": "A",
-      "B+": "1.4V typical",
-      "B++": "Power",
-      "CPU.VDD": "POWER",
+      "B+": "Power",
+      "B++": "POWER",
+      "CPU.VDD": "Power",
       "GND": "POWER",
       "LIM_DATA": "A",
       "RF.A+": "RF",
-      "RF.VDD": "POWER",
+      "RF.VDD": "Power",
       "VDD": "POWER"
     },
     "netclass_patterns": []
