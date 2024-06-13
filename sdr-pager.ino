@@ -12,12 +12,24 @@
 #define RADIOLIB_SI4362_CMD_SET_PROPERTY 0x11
 #define RADIOLIB_SI4362_CMD_GET_PROPERTY 0x12
 
-#define RADIOLIB_SI4362_GROUP_FREQ_CONTROL 0x40
+#define RADIOLIB_SI4362_GROUP_MODEM 0x20
+#define RADIOLIB_SI4362_PROP_MODEM_CLKGEN_BAND 0x51
 
+#define RADIOLIB_SI4362_GROUP_FREQ_CONTROL 0x40
+#define RADIOLIB_SI4362_PROP_FREQ_CONTROL_INTE 0x0
 
 #define RADIOLIB_SI4362_FREQUENCY_RESOLUTION 14.3
 
-#define RADIOLIB_PAGER_FREQ_SHIFT_HZ                            (4500)
+#define RADIOLIB_PAGER_FREQ_SHIFT_HZ (4500)
+
+#define SI4362_SETPROP(grp, prop, val)                                         \
+  setProperty(RADIOLIB_SI4362_GROUP_##grp,                                     \
+              RADIOLIB_SI4362_PROP_##grp##_##prop, 1, val)
+#define SI4362_SETPROPS(grp, prop, ...)                                        \
+  setProperty(RADIOLIB_SI4362_GROUP_##grp,                                     \
+              RADIOLIB_SI4362_PROP_##grp##_##prop, __VA_ARGS__)
+
+#define XTAL_KHZ 30000
 
 #define nSEL 10
 #define nIRQ 16
@@ -37,8 +49,11 @@ public:
 protected:
   bool findChip();
   void clearIRQFlags(bool perform_validation = false);
-  void transferSPI(uint8_t cmd, uint8_t *in=NULL, uint8_t in_l=0, uint8_t *out=NULL, uint8_t out_l=0);
-  void setProperty(uint8_t group, uint8_t start_prop, uint8_t props_l, uint8_t prop1, uint8_t prop2=NULL, uint8_t prop3=NULL, uint8_t prop4=NULL, uint8_t prop5=NULL);
+  void transferSPI(uint8_t cmd, uint8_t *in = NULL, uint8_t in_l = 0,
+                   uint8_t *out = NULL, uint8_t out_l = 0);
+  void setProperty(uint8_t group, uint8_t start_prop, uint8_t props_l,
+                   uint8_t prop1, uint8_t prop2 = NULL, uint8_t prop3 = NULL,
+                   uint8_t prop4 = NULL, uint8_t prop5 = NULL);
   void reset(bool keep_down = false);
   void wait();
   void fail();
@@ -94,7 +109,6 @@ union Si4362::GET_INT_STATUS_REQ_t {
   uint8_t bytes[3];
 };
 
-
 union Si4362::SET_PROPERTY_t {
   struct {
     uint8_t group;
@@ -113,20 +127,21 @@ bool Si4362::begin(float freq, float br, float freqDev) {
   digitalWrite(SDN, HIGH);
   digitalWrite(nSEL, HIGH);
 
-  spi.begin(); 
+  spi.begin();
   if (!Si4362::findChip())
     return false;
 
   clearIRQFlags(true);
-  int16_t state = setFrequency(freq);
-  //setBitRate(br);
-  //setFrequencyDeviation(freqDev);
-  //setRxBandwidth(rxBw);
-  //setPreambleLength(preambleLen);
-  //packetMode();
-  //setEncoding(0);
-  //setDataShaping(0);
-  //variablePacketLengthMode();
+  standby();
+  setFrequency(freq);
+  // setBitRate(br);
+  // setFrequencyDeviation(freqDev);
+  // setRxBandwidth(rxBw);
+  // setPreambleLength(preambleLen);
+  // packetMode();
+  // setEncoding(0);
+  // setDataShaping(0);
+  // variablePacketLengthMode();
 
   return true;
 }
@@ -144,15 +159,17 @@ bool Si4362::findChip() {
   Serial.println("finished");
 
   Serial.print("Powering up: ");
-  transferSPI(RADIOLIB_SI4362_CMD_POWER_UP, power_up.bytes, sizeof(power_up.bytes), NULL, 0);
+  transferSPI(RADIOLIB_SI4362_CMD_POWER_UP, power_up.bytes,
+              sizeof(power_up.bytes), NULL, 0);
   Serial.println("powered up");
 
   Serial.print("Getting part info: ");
-  transferSPI(RADIOLIB_SI4362_CMD_PART_INFO, NULL, 0, part_info.bytes, sizeof(part_info.bytes));
+  transferSPI(RADIOLIB_SI4362_CMD_PART_INFO, NULL, 0, part_info.bytes,
+              sizeof(part_info.bytes));
   uint16_t partno = htons(part_info.part);
   if (partno != 0x4362) {
     Serial.print("chip id is wrong, got 0x");
-    Serial.print(partno, HEX);    
+    Serial.print(partno, HEX);
     return false;
   }
 
@@ -167,7 +184,8 @@ void Si4362::clearIRQFlags(bool perform_validation = false) {
 
     if (perform_validation) {
       get_int_status = {127, 255, 255};
-      transferSPI(RADIOLIB_SI4362_CMD_GET_INT_STATUS, get_int_status.bytes, sizeof(get_int_status.bytes), NULL, 0);
+      transferSPI(RADIOLIB_SI4362_CMD_GET_INT_STATUS, get_int_status.bytes,
+                  sizeof(get_int_status.bytes), NULL, 0);
       if (digitalRead(nIRQ) != LOW) {
         Serial.println("interrupts didn't stay");
         return false;
@@ -175,7 +193,8 @@ void Si4362::clearIRQFlags(bool perform_validation = false) {
       Serial.print("nop ok, now clearing: ");
       get_int_status = {0, 0, 0};
     }
-    transferSPI(RADIOLIB_SI4362_CMD_GET_INT_STATUS, get_int_status.bytes, sizeof(get_int_status.bytes), NULL, 0);
+    transferSPI(RADIOLIB_SI4362_CMD_GET_INT_STATUS, get_int_status.bytes,
+                sizeof(get_int_status.bytes), NULL, 0);
     if (digitalRead(nIRQ) != HIGH) {
       Serial.println("interrupts didn't clear");
     } else {
@@ -187,20 +206,21 @@ void Si4362::clearIRQFlags(bool perform_validation = false) {
   }
 }
 
-void Si4362::transferSPI(uint8_t cmd, uint8_t *in=NULL, uint8_t in_l=0, uint8_t *out=NULL, uint8_t out_l=0) {
+void Si4362::transferSPI(uint8_t cmd, uint8_t *in = NULL, uint8_t in_l = 0,
+                         uint8_t *out = NULL, uint8_t out_l = 0) {
   uint8_t cts = 0xFF;
   spi.beginTransaction(spiSettings);
-  
-  wait();  
+
+  wait();
   digitalWrite(nSEL, LOW);
   spi.transfer(cmd);
   if (digitalRead(CTS) == LOW)
     Serial.print("chip responded; ");
   for (int i = 0; i < in_l; i++) {
     spi.transfer(in[i]);
-  }  
+  }
   digitalWrite(nSEL, HIGH);
-  
+
   if (out_l != 0) {
     Serial.print("reading back; ");
     wait();
@@ -220,7 +240,7 @@ void Si4362::transferSPI(uint8_t cmd, uint8_t *in=NULL, uint8_t in_l=0, uint8_t 
       Serial.println(" SPI did not respond");
       return false;
     }
-    
+
     for (int i = 0; i < out_l; i++) {
       out[i] = spi.transfer(0);
     }
@@ -229,12 +249,16 @@ void Si4362::transferSPI(uint8_t cmd, uint8_t *in=NULL, uint8_t in_l=0, uint8_t 
   } else {
     wait();
   }
-  
+
   spi.endTransaction();
 }
 
-void Si4362::setProperty(uint8_t group, uint8_t start_prop, uint8_t props_l, uint8_t prop1, uint8_t prop2=NULL, uint8_t prop3=NULL, uint8_t prop4=NULL, uint8_t prop5=NULL) {
-  Si4362::SET_PROPERTY_t properties = {group, props_l, start_prop, prop1, prop2, prop3, prop4, prop5};
+void Si4362::setProperty(uint8_t group, uint8_t start_prop, uint8_t props_l,
+                         uint8_t prop1, uint8_t prop2 = NULL,
+                         uint8_t prop3 = NULL, uint8_t prop4 = NULL,
+                         uint8_t prop5 = NULL) {
+  Si4362::SET_PROPERTY_t properties = {group, props_l, start_prop, prop1,
+                                       prop2, prop3,   prop4,      prop5};
   Serial.print("Setting properties ");
   Serial.print(group, HEX);
   Serial.print("[");
@@ -245,12 +269,13 @@ void Si4362::setProperty(uint8_t group, uint8_t start_prop, uint8_t props_l, uin
   }
   Serial.print("]: ");
 
-  transferSPI(RADIOLIB_SI4362_CMD_SET_PROPERTY, properties.bytes, 3+props_l, NULL, 0);
+  transferSPI(RADIOLIB_SI4362_CMD_SET_PROPERTY, properties.bytes, 3 + props_l,
+              NULL, 0);
   /*
   properties.props[0] = 0;
     Serial.print(properties.props[0], HEX);
-  transferSPI(RADIOLIB_SI4362_CMD_GET_PROPERTY, properties.bytes, 3, properties.props, props_l);
-  Serial.print(properties.props[0], HEX);
+  transferSPI(RADIOLIB_SI4362_CMD_GET_PROPERTY, properties.bytes, 3,
+  properties.props, props_l); Serial.print(properties.props[0], HEX);
   Serial.println();
   */
 }
@@ -267,7 +292,8 @@ void Si4362::reset(bool keep_down = false) {
 void Si4362::wait() {
   for (uint8_t i = 0; i < 200; i++) {
     if (digitalRead(CTS) == HIGH) {
-      if (i != 0) Serial.print(" ok; ");
+      if (i != 0)
+        Serial.print(" ok; ");
       return;
     }
 
@@ -299,13 +325,60 @@ int16_t Si4362::standby(uint8_t state = 1) {
   Serial.println(new_state);
 }
 
+int16_t Si4362::setFrequency(float freq) {
+  /*
+   * RF_{Channel_{Hz}]=\left(fc_{inte}+
+   * \frac{fc_{frac}X2^{19}}\right) \times
+   * \left\frac{N_{PRESC} \times freq _xoXoutdiv} \right)
+   */
+  Serial.println("Freq params: ");
 
-int16_t Si4362::setFrequency(float newFreq) {
-  int16_t state = standby();
-  setProperty(RADIOLIB_SI4362_GROUP_FREQ_CONTROL, 0, 1, 0x3c);
+  uint8_t npresc = 2;
+  uint8_t clkband = 0;
+  if (npresc == 2)
+    clkband = 1 << 3;
+  else if (npresc != 4) {
+    Serial.println("invalid npresc");
+    fail();
+  }
+  Serial.println(npresc);
+
+  uint8_t outdiv = 0;
+
+  if (freq >= 142 && freq <= 175) {
+    outdiv = 24;
+    clkband = clkband | 5;
+  } else if (freq >= 284 && freq <= 350) {
+    outdiv = 12;
+    clkband = clkband | 3;
+  }
+
+  else if (freq > 420 && freq <= 525) {
+    outdiv = 8;
+  } else if (freq >= 850 && freq <= 1050) {
+    outdiv = 4;
+  } else {
+    Serial.println("invalid frequency");
+    fail();
+  }
+
+  Serial.println(outdiv);
+
+  int16_t scaler_k = XTAL_KHZ * npresc / outdiv;
+  double N = ((freq * 1000) / scaler_k) / 1000;
+  uint8_t inte = ((uint8_t)N) - 1;
+  uint32_t frac = round((N - inte) * 524288);
+
+  Serial.println(inte);
+  Serial.println(frac);
+  Serial.println((uint8_t)(frac >> 16), HEX);
+  Serial.println((uint8_t)((frac >> 8) & 0xff), HEX);
+  Serial.println((uint8_t)(frac & 0xff), HEX);
+
+  SI4362_SETPROP(MODEM, CLKGEN_BAND, clkband);
+  SI4362_SETPROPS(FREQ_CONTROL, INTE, 4, inte, (uint8_t)(frac >> 16),
+                  (uint8_t)((frac >> 8) & 0xff), (uint8_t)(frac & 0xff));
 }
-
-
 
 Si4362 radio;
 
@@ -316,8 +389,9 @@ void setup() {
   Serial.begin(57600);
   Serial.println();
   Serial.println("sdr-pager up");
-  
+
   radio.begin(FREQ, RATE, RADIOLIB_PAGER_FREQ_SHIFT_HZ);
+
   delay(2000);
   radio.end();
 }
